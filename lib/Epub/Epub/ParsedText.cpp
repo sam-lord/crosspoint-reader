@@ -170,7 +170,9 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
       }
 
       // Cannot break after word j if the next word attaches to it (continuation group)
-      if (j + 1 < totalWordCount && continuesVec[j + 1]) {
+      // Skip this restriction for preformatted text (noExtraSpacing) where continuation
+      // is used solely to prevent extra inter-word spacing, not to bind words together.
+      if (!blockStyle.noExtraSpacing && j + 1 < totalWordCount && continuesVec[j + 1]) {
         continue;
       }
 
@@ -300,8 +302,12 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
 
     // Don't break before a continuation word (e.g., orphaned "?" after "question").
     // Backtrack to the start of the continuation group so the whole group moves to the next line.
-    while (currentIndex > lineStart + 1 && currentIndex < wordWidths.size() && continuesVec[currentIndex]) {
-      --currentIndex;
+    // Skip backtracking for preformatted text (noExtraSpacing) where continuation is used
+    // solely to prevent extra inter-word spacing, not to bind words together.
+    if (!blockStyle.noExtraSpacing) {
+      while (currentIndex > lineStart + 1 && currentIndex < wordWidths.size() && continuesVec[currentIndex]) {
+        --currentIndex;
+      }
     }
 
     lineBreakIndices.push_back(currentIndex);

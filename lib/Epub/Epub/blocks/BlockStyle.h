@@ -22,6 +22,7 @@ struct BlockStyle {
   int16_t textIndent = 0;
   bool textIndentDefined = false;  // true if text-indent was explicitly set in CSS
   bool textAlignDefined = false;   // true if text-align was explicitly set in CSS
+  bool noExtraSpacing = false;     // true to suppress extra paragraph spacing (e.g., preformatted lines)
 
   // Combined horizontal insets (margin + padding)
   [[nodiscard]] int16_t leftInset() const { return marginLeft + paddingLeft; }
@@ -58,6 +59,8 @@ struct BlockStyle {
       combinedBlockStyle.alignment = alignment;
       combinedBlockStyle.textAlignDefined = textAlignDefined;
     }
+    // Preserve noExtraSpacing if either parent or child has it
+    combinedBlockStyle.noExtraSpacing = noExtraSpacing || child.noExtraSpacing;
     return combinedBlockStyle;
   }
 

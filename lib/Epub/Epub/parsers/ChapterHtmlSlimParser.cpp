@@ -18,7 +18,7 @@ constexpr int NUM_HEADER_TAGS = sizeof(HEADER_TAGS) / sizeof(HEADER_TAGS[0]);
 // Minimum file size (in bytes) to show indexing popup - smaller chapters don't benefit from it
 constexpr size_t MIN_SIZE_FOR_POPUP = 10 * 1024;  // 10KB
 
-const char* BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote"};
+const char* BLOCK_TAGS[] = {"p", "li", "div", "br", "blockquote", "pre"};
 constexpr int NUM_BLOCK_TAGS = sizeof(BLOCK_TAGS) / sizeof(BLOCK_TAGS[0]);
 
 const char* BOLD_TAGS[] = {"b", "strong"};
@@ -326,6 +326,16 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
     self->startNewTextBlock(headerBlockStyle);
     self->boldUntilDepth = std::min(self->boldUntilDepth, self->depth);
     self->updateEffectiveInlineStyle();
+  } else if (strcmp(name, "pre") == 0) {
+    // Preformatted text block - preserve whitespace
+    self->currentCssStyle = cssStyle;
+    auto preBlockStyle = BlockStyle::fromCssStyle(cssStyle, emSize, CssTextAlign::Left, self->viewportWidth);
+    preBlockStyle.textAlignDefined = true;
+    preBlockStyle.alignment = CssTextAlign::Left;
+    preBlockStyle.noExtraSpacing = true;
+    self->startNewTextBlock(preBlockStyle);
+    self->updateEffectiveInlineStyle();
+    self->preformattedUntilDepth = std::min(self->preformattedUntilDepth, self->depth);
   } else if (matches(name, BLOCK_TAGS, NUM_BLOCK_TAGS)) {
     if (strcmp(name, "br") == 0) {
       if (self->partWordBufferIndex > 0) {
@@ -447,8 +457,59 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     return;
   }
 
+  const bool inPreformatted = self->preformattedUntilDepth < self->depth;
+
   for (int i = 0; i < len; i++) {
     if (isWhitespace(s[i])) {
+      if (inPreformatted) {
+        // In preformatted text, preserve whitespace
+        if (s[i] == '\n') {
+          // Newline starts a new line/text block
+          if (self->partWordBufferIndex > 0) {
+            self->flushPartWordBuffer();
+          }
+          // If current block is empty, add a space to prevent block merging
+          // This ensures empty lines take up vertical space
+          if (self->currentTextBlock->isEmpty()) {
+            self->currentTextBlock->addWord(" ", EpdFontFamily::REGULAR);
+          }
+          // Create continuation block with same horizontal styling but no vertical margins
+          auto contStyle = self->currentTextBlock->getBlockStyle();
+          contStyle.marginTop = 0;
+          contStyle.marginBottom = 0;
+          contStyle.paddingTop = 0;
+          contStyle.paddingBottom = 0;
+          self->startNewTextBlock(contStyle);
+        } else {
+          // Space or tab in preformatted text
+          // Flush any pending text, then accumulate the space into the buffer
+          // The space will become part of the next word (preserving exact whitespace)
+          if (self->partWordBufferIndex > 0) {
+            // Check if buffer has any non-space content
+            bool hasNonSpace = false;
+            for (int j = 0; j < self->partWordBufferIndex; j++) {
+              if (self->partWordBuffer[j] != ' ') {
+                hasNonSpace = true;
+                break;
+              }
+            }
+            if (hasNonSpace) {
+              // Flush the text word, spaces will start a new accumulation
+              self->flushPartWordBuffer();
+              // Mark next word as continuation so layout doesn't add extra spacing
+              // (the space is already part of the next word's content)
+              self->nextWordContinues = true;
+            }
+          }
+          // Accumulate space - it will be prepended to the next word
+          if (self->partWordBufferIndex < MAX_WORD_SIZE) {
+            self->partWordBuffer[self->partWordBufferIndex++] = ' ';
+          }
+        }
+        continue;
+      }
+
+      // Normal text: collapse whitespace
       // Currently looking at whitespace, if there's anything in the partWordBuffer, flush it
       if (self->partWordBufferIndex > 0) {
         self->flushPartWordBuffer();
@@ -499,6 +560,10 @@ void XMLCALL ChapterHtmlSlimParser::characterData(void* userData, const XML_Char
     if (self->partWordBufferIndex >= MAX_WORD_SIZE) {
       self->flushPartWordBuffer();
     }
+
+    // In preformatted mode, spaces are accumulated in the buffer and will be
+    // prepended to this non-space character, preserving exact whitespace.
+    // No special handling needed - just add the character to the buffer.
 
     self->partWordBuffer[self->partWordBufferIndex++] = s[i];
   }
@@ -585,6 +650,18 @@ void XMLCALL ChapterHtmlSlimParser::endElement(void* userData, const XML_Char* n
   // Leaving underline tag
   if (self->underlineUntilDepth == self->depth) {
     self->underlineUntilDepth = INT_MAX;
+  }
+
+  // Leaving preformatted block
+  if (self->preformattedUntilDepth == self->depth) {
+    self->preformattedUntilDepth = INT_MAX;
+    // Restore normal paragraph spacing for the last line of the pre block
+    // so there's proper spacing between pre content and following text
+    if (self->currentTextBlock) {
+      auto style = self->currentTextBlock->getBlockStyle();
+      style.noExtraSpacing = false;
+      self->currentTextBlock->setBlockStyle(style);
+    }
   }
 
   // Pop from inline style stack if we pushed an entry at this depth
@@ -747,8 +824,8 @@ void ChapterHtmlSlimParser::makePages() {
     currentPageNextY += blockStyle.paddingBottom;
   }
 
-  // Extra paragraph spacing if enabled (default behavior)
-  if (extraParagraphSpacing) {
+  // Extra paragraph spacing if enabled (default behavior), unless block opts out
+  if (extraParagraphSpacing && !blockStyle.noExtraSpacing) {
     currentPageNextY += lineHeight / 2;
   }
 }

@@ -5,6 +5,7 @@
 #include <Serialization.h>
 
 #include "Epub/css/CssParser.h"
+#include "HtmlSanitizer.h"
 #include "Page.h"
 #include "hyphenation/Hyphenator.h"
 #include "parsers/ChapterHtmlSlimParser.h"
@@ -204,6 +205,27 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
       embeddedStyle, contentBase, imageBasePath, popupFn, cssParser);
   Hyphenator::setPreferredLanguage(epub->getLanguage());
   success = visitor.parseAndBuildPages();
+
+  if (!success && sanitizeHtmlFile(tmpHtmlPath)) {
+    LOG_DBG("SCT", "Retrying parse after HTML sanitization");
+    file.close();
+    Storage.remove(filePath.c_str());
+    if (!Storage.openFileForWrite("SCT", filePath, file)) {
+      Storage.remove(tmpHtmlPath.c_str());
+      return false;
+    }
+    lut.clear();
+    pageCount = 0;
+    writeSectionFileHeader(fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
+                           viewportHeight, hyphenationEnabled, embeddedStyle);
+
+    ChapterHtmlSlimParser visitor2(
+        epub, tmpHtmlPath, renderer, fontId, lineCompression, extraParagraphSpacing, paragraphAlignment, viewportWidth,
+        viewportHeight, hyphenationEnabled,
+        [this, &lut](std::unique_ptr<Page> page) { lut.emplace_back(this->onPageComplete(std::move(page))); },
+        embeddedStyle, contentBase, imageBasePath, popupFn, cssParser);
+    success = visitor2.parseAndBuildPages();
+  }
 
   Storage.remove(tmpHtmlPath.c_str());
   if (!success) {

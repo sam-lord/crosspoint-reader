@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include "../BookMetadataCache.h"
+#include "../htmlEntities.h"
 
 bool TocNcxParser::setup() {
   parser = XML_ParserCreate(nullptr);
@@ -170,7 +171,9 @@ void XMLCALL TocNcxParser::endElement(void* userData, const XML_Char* name) {
       }
 
       if (self->cache) {
-        self->cache->createTocEntry(self->currentLabel, href, anchor, self->currentDepth);
+        // Decode any HTML entities in the label (e.g., &#160; from double-escaped &amp;#160;)
+        std::string decodedLabel = decodeHtmlEntities(self->currentLabel);
+        self->cache->createTocEntry(decodedLabel, href, anchor, self->currentDepth);
       }
 
       // Clear them so we don't re-add them if there are weird XML structures

@@ -74,3 +74,96 @@ const char* lookupHtmlEntity(const char* entity, int len) {
 
   return nullptr;  // Entity not found
 }
+
+// Helper to encode a Unicode code point to UTF-8
+static void encodeUtf8(uint32_t codePoint, std::string& out) {
+  if (codePoint <= 0x7F) {
+    out += static_cast<char>(codePoint);
+  } else if (codePoint <= 0x7FF) {
+    out += static_cast<char>(0xC0 | (codePoint >> 6));
+    out += static_cast<char>(0x80 | (codePoint & 0x3F));
+  } else if (codePoint <= 0xFFFF) {
+    out += static_cast<char>(0xE0 | (codePoint >> 12));
+    out += static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (codePoint & 0x3F));
+  } else if (codePoint <= 0x10FFFF) {
+    out += static_cast<char>(0xF0 | (codePoint >> 18));
+    out += static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F));
+    out += static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (codePoint & 0x3F));
+  }
+}
+
+std::string decodeHtmlEntities(const std::string& input) {
+  std::string result;
+  result.reserve(input.size());
+
+  size_t i = 0;
+  while (i < input.size()) {
+    if (input[i] == '&') {
+      // Look for the end of the entity
+      size_t end = input.find(';', i);
+      if (end != std::string::npos && end > i + 1) {
+        size_t entityLen = end - i + 1;
+
+        // Check for numeric character reference
+        if (input[i + 1] == '#') {
+          uint32_t codePoint = 0;
+          bool valid = false;
+
+          if (input[i + 2] == 'x' || input[i + 2] == 'X') {
+            // Hexadecimal: &#xAB;
+            for (size_t j = i + 3; j < end; j++) {
+              char c = input[j];
+              if (c >= '0' && c <= '9') {
+                codePoint = codePoint * 16 + (c - '0');
+                valid = true;
+              } else if (c >= 'a' && c <= 'f') {
+                codePoint = codePoint * 16 + (c - 'a' + 10);
+                valid = true;
+              } else if (c >= 'A' && c <= 'F') {
+                codePoint = codePoint * 16 + (c - 'A' + 10);
+                valid = true;
+              } else {
+                valid = false;
+                break;
+              }
+            }
+          } else {
+            // Decimal: &#123;
+            for (size_t j = i + 2; j < end; j++) {
+              char c = input[j];
+              if (c >= '0' && c <= '9') {
+                codePoint = codePoint * 10 + (c - '0');
+                valid = true;
+              } else {
+                valid = false;
+                break;
+              }
+            }
+          }
+
+          if (valid && codePoint > 0 && codePoint <= 0x10FFFF) {
+            encodeUtf8(codePoint, result);
+            i = end + 1;
+            continue;
+          }
+        } else {
+          // Named entity: try lookup
+          const char* value = lookupHtmlEntity(input.c_str() + i, static_cast<int>(entityLen));
+          if (value != nullptr) {
+            result += value;
+            i = end + 1;
+            continue;
+          }
+        }
+      }
+    }
+
+    // Not an entity or unknown entity - copy character as-is
+    result += input[i];
+    i++;
+  }
+
+  return result;
+}

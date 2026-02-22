@@ -4,6 +4,7 @@
 #include <Logging.h>
 
 #include "../BookMetadataCache.h"
+#include "../htmlEntities.h"
 
 bool TocNavParser::setup() {
   parser = XML_ParserCreate(nullptr);
@@ -151,8 +152,10 @@ void XMLCALL TocNavParser::endElement(void* userData, const XML_Char* name) {
       }
 
       if (self->cache) {
+        // Decode any HTML entities in the label (e.g., &#160; from double-escaped &amp;#160;)
+        std::string decodedLabel = decodeHtmlEntities(self->currentLabel);
         // olDepth gives us the nesting level (1-based from the outer ol)
-        self->cache->createTocEntry(self->currentLabel, href, anchor, self->olDepth);
+        self->cache->createTocEntry(decodedLabel, href, anchor, self->olDepth);
       }
 
       self->currentLabel.clear();
